@@ -2,11 +2,11 @@
 
 配置驱动、安全加固的 [Verdaccio](https://verdaccio.org/) 私有 NPM 注册表部署套件。
 
-通过一份 TypeScript 描述性配置 (`knuth.config.ts`) 统一派生 Verdaccio 主配置与 Docker Compose 编排文件, 避免站点名称、对外域名与私有 scope 在多处文件之间散落和漂移, 同时内置防依赖混淆、上游源收敛与用户端点限流策略。
+通过一份 TypeScript 描述性配置 (`knuth.config.ts`) 统一派生 Verdaccio 主配置、Docker Compose 编排文件与 Kubernetes 部署清单, 避免站点名称、对外域名与私有 scope 在多处文件之间散落和漂移, 同时内置防依赖混淆、上游源收敛与用户端点限流策略。
 
 ## 核心特性
 
-- **TypeScript 单源配置驱动**: 基于 `defineConfig` 提供完整类型约束与 IDE 悬停提示, 由 `knuth.config.ts` 一次生成 `conf/config.yaml`、`docker-compose.yaml` 与 `docker-compose-debug.yaml`, 并支持 `--check` 防配置漂移。
+- **TypeScript 单源配置驱动**: 基于 `defineConfig` 提供完整类型约束与 IDE 悬停提示, 由 `knuth.config.ts` 一次生成 `conf/config.yaml`、`docker-compose.yaml`、`docker-compose-debug.yaml` 与 `k8s/verdaccio.yaml`, 并支持 `--check` 防配置漂移。
 - **零公司绑定与防误提交**: 本地配置 (`knuth.config.ts`) 与所有生成产物均在 `.gitignore` 中忽略, 部署私有环境时不会误将组织域名或内部 scope 提交到版本库。
 - **依赖混淆防护**: 配置中的 `scopes.private` 与 `scopes.publicInternal` 自动排在 `@*/*` 规则之前并强制切断 `proxy`, 确保内部包不向公共源查询与合并元数据。
 - **安全与高可用默认项**:
@@ -17,7 +17,7 @@
 ## 环境要求
 
 - Node.js `>= 24` (初始化脚本与 `.ts` 配置基于原生 TypeScript 类型剥离直接运行, 无需编译或安装第三方运行时依赖)
-- Docker / Docker Compose
+- 容器运行环境任选其一: Docker / OrbStack / Podman / macOS `container` / Kubernetes
 
 ## 快速开始
 
@@ -66,8 +66,11 @@ npm run init
 - `conf/config.yaml`: Verdaccio 主配置
 - `docker-compose.yaml`: 生产编排配置
 - `docker-compose-debug.yaml`: 本地调试编排配置 (不注入 `VERDACCIO_PUBLIC_URL`)
+- `k8s/verdaccio.yaml`: Kubernetes 部署清单 (包含 Namespace、ConfigMap、PVC、Deployment 与 Service)
 
-#### 第 3 步: 启动与进入容器
+#### 第 3 步: 按平台启动
+
+下例以 Docker / OrbStack 为例, 其余平台 (`macOS container`、`Podman`、`Kubernetes`) 见下方「多平台启动与构建指南」或直接运行 `npm run init -- --commands` 导出等效命令:
 
 ```shell
 # 正式启动 (后台运行)
@@ -82,6 +85,19 @@ docker compose -f ./docker-compose-debug.yaml up
 ```shell
 docker exec -it --user=root knuth-verdaccio sh
 ```
+
+## 多平台启动与构建指南
+
+每个运行平台在卷权限、用户映射、健康检查与跨架构构建上存在差异, 请按实际环境查阅对应独立文档:
+
+| 平台 / 主题 | 说明 | 文档 |
+|---|---|---|
+| **Docker** | Compose 与原生 `docker run` 启动、Linux `10001` 属主授权、ARM64 树莓派 `Docker -> containerd -> crun` 三层架构说明 | [docs/docker.md](./docs/docker.md) |
+| **OrbStack** | Compose 零改启动、`.orb.local` 零配置域名与 VirtioFS 存储建议 | [docs/orbstack.md](./docs/orbstack.md) |
+| **macOS `container`** | Apple 原生虚拟机容器、`container system start`、具名卷 `10001:65533` 属主初始化与单容器参数 | [docs/macos-container.md](./docs/macos-container.md) |
+| **Podman** | Rootless `--userns=keep-id:uid=10001,gid=65533` 映射、SELinux 卷标签与 `podman compose` 用法 | [docs/podman.md](./docs/podman.md) |
+| **Kubernetes (K8s)** | 基于生成的 `k8s/verdaccio.yaml` 部署、ConfigMap 只读与 `htpasswd` 分离、Ingress 注意事项 | [docs/k8s.md](./docs/k8s.md) |
+| **构建与架构差异** | 默认免构建多架构镜像原理, 以及 5 个平台自定义扩展构建时的命令与机制差异 | [docs/build-and-platforms.md](./docs/build-and-platforms.md) |
 
 ### 客户端接入与首次发包
 
@@ -131,6 +147,7 @@ npm run init -- [选项]
 | `--example` | 使用内置 `knuth.config.example.ts` 生成配置 |
 | `--dry-run` | 仅预览将生成的文件体积与等效 `docker run` 命令, 不写入磁盘 |
 | `--check` | 检查已生成文件是否与配置源完全一致, 漂移时返回非零退出码 |
+| `--commands` | 仅输出各容器平台 (Docker/OrbStack/Podman/macOS container/K8s) 的等效启动命令 |
 | `-h, --help` | 显示命令行帮助 |
 
 ## 校验与测试
