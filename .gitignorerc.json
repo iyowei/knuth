@@ -1,0 +1,23 @@
+{
+  "topics": [
+    "macOS",
+    "Windows",
+    "Linux",
+    "Node",
+    "JetBrains",
+    "VisualStudioCode",
+    "SublimeText",
+    "CVS",
+    "Vim",
+    "TortoiseGit"
+  ],
+
+  "custom": [
+    "storage/data",
+    "conf/htpasswd",
+    "conf/config.yaml",
+    "docker-compose.yaml",
+    "docker-compose-debug.yaml",
+    "knuth.config.json"
+  ]
+}

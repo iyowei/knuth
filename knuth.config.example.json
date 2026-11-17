@@ -1,0 +1,53 @@
+{
+  "$schema": "./knuth.config.schema.json",
+  "registry": {
+    "title": "Knuth NPM 注册表",
+    "description": "配置驱动、安全加固的私有 NPM 注册表",
+    "publicUrl": "http://localhost:5673",
+    "logo": "",
+    "darkMode": true,
+    "i18n": "zh-CN",
+    "maxBodySize": "100mb",
+    "keepAliveTimeout": 36000,
+    "logLevel": "warn"
+  },
+  "docker": {
+    "image": "verdaccio/verdaccio:6.10.1",
+    "containerName": "knuth-verdaccio",
+    "port": 5673,
+    "networkName": "knuth-network"
+  },
+  "auth": {
+    "maxUsers": 12,
+    "jwtExpiresIn": "8h",
+    "userRateLimit": {
+      "windowMs": 60000,
+      "max": 30
+    }
+  },
+  "scopes": {
+    "private": [
+      "@knuth/*"
+    ],
+    "publicInternal": [
+      "@knuth-public/*"
+    ]
+  },
+  "uplinks": [
+    {
+      "name": "alibaba",
+      "url": "https://registry.npmmirror.com",
+      "timeout": "10s",
+      "failTimeout": "1m"
+    },
+    {
+      "name": "huawei",
+      "url": "https://mirrors.huaweicloud.com/repository/npm/",
+      "timeout": "10s",
+      "failTimeout": "1m"
+    }
+  ],
+  "publish": {
+    "allowOffline": true
+  }
+}

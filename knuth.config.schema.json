@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/iyowei/knuth/knuth.config.schema.json",
+  "title": "Knuth Configuration",
+  "description": "Knuth 私有 NPM 注册表部署配置描述文件",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["registry"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema 路径"
+    },
+    "registry": {
+      "type": "object",
+      "description": "注册表站点与核心运行参数",
+      "additionalProperties": false,
+      "required": ["title", "publicUrl"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Web UI 页面标题"
+        },
+        "description": {
+          "type": "string",
+          "default": "配置驱动、安全加固的私有 NPM 注册表",
+          "description": "注册表实例描述信息, 写入生成产物头注释"
+        },
+        "publicUrl": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "对外访问完整 URL (同步驱动 web.publicPath 与 VERDACCIO_PUBLIC_URL)"
+        },
+        "logo": {
+          "type": "string",
+          "default": "",
+          "description": "Web UI Logo URL; 留空则不输出 logo 字段"
+        },
+        "darkMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用暗色主题"
+        },
+        "i18n": {
+          "type": "string",
+          "default": "zh-CN",
+          "description": "Web UI 界面语言"
+        },
+        "maxBodySize": {
+          "type": "string",
+          "default": "100mb",
+          "pattern": "^[1-9][0-9]*(kb|mb|gb)$",
+          "description": "单次请求体最大体积 (如 100mb)"
+        },
+        "keepAliveTimeout": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 36000,
+          "description": "HTTP Keep-Alive 超时秒数"
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": ["trace", "debug", "info", "http", "warn", "error", "fatal"],
+          "default": "warn",
+          "description": "Verdaccio 日志输出级别"
+        }
+      }
+    },
+    "docker": {
+      "type": "object",
+      "description": "Docker Compose 部署参数",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string",
+          "default": "verdaccio/verdaccio:6.10.1",
+          "description": "Verdaccio 容器镜像及标签"
+        },
+        "containerName": {
+          "type": "string",
+          "default": "knuth-verdaccio",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$",
+          "description": "容器名称"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 5673,
+          "description": "宿主机与容器映射端口"
+        },
+        "networkName": {
+          "type": "string",
+          "default": "knuth-network",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$",
+          "description": "Docker Compose 桥接网络名称"
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "description": "用户注册、会话有效期与限流参数",
+      "additionalProperties": false,
+      "properties": {
+        "maxUsers": {
+          "type": "integer",
+          "minimum": -1,
+          "default": 12,
+          "description": "允许注册的最大用户数; 设为 -1 可禁止新用户注册"
+        },
+        "jwtExpiresIn": {
+          "type": "string",
+          "default": "8h",
+          "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+          "description": "Web 登录令牌有效期 (如 8h)"
+        },
+        "userRateLimit": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "windowMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "default": 60000,
+              "description": "限流时间窗口 (毫秒)"
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 30,
+              "description": "时间窗口内单用户端点最大请求次数"
+            }
+          }
+        }
+      }
+    },
+    "scopes": {
+      "type": "object",
+      "description": "内部包作用域权限规则 (脚本自动切断上游 proxy 防依赖混淆, 并排在 @*/* 之前)",
+      "additionalProperties": false,
+      "properties": {
+        "private": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "完全私有作用域 (如 @myorg/* 或 @myorg): 仅认证用户可读写"
+        },
+        "publicInternal": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "公开可读内部作用域 (如 @myorg-public/*): 匿名可读, 仅认证用户可发布与撤包"
+        }
+      }
+    },
+    "uplinks": {
+      "type": "array",
+      "minItems": 1,
+      "description": "公共包代理上游注册表列表 (按声明顺序串联探测)",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "description": "上游源标识名"
+          },
+          "url": {
+            "type": "string",
+            "pattern": "^https?://",
+            "description": "上游源基础 URL"
+          },
+          "timeout": {
+            "type": "string",
+            "default": "10s",
+            "pattern": "^[1-9][0-9]*(ms|s|m)$",
+            "description": "单次请求超时"
+          },
+          "failTimeout": {
+            "type": "string",
+            "default": "1m",
+            "pattern": "^[1-9][0-9]*(ms|s|m)$",
+            "description": "连续失败进入冷却后的恢复探测周期"
+          }
+        }
+      }
+    },
+    "publish": {
+      "type": "object",
+      "description": "发布策略配置",
+      "additionalProperties": false,
+      "properties": {
+        "allowOffline": {
+          "type": "boolean",
+          "default": true,
+          "description": "上游公共源不可达时是否允许继续发布 (对本地私有 scope 零影响)"
+        }
+      }
+    }
+  }
+}

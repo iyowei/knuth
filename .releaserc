@@ -1,0 +1,170 @@
+{
+  "branches": [
+    "main"
+  ],
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "parserOpts": {
+          "noteKeywords": [
+            "破坏性更改"
+          ]
+        },
+        "releaseRules": [
+          {
+            "type": "feat",
+            "release": "minor"
+          },
+          {
+            "type": "feature",
+            "release": "minor"
+          },
+          {
+            "type": "fix",
+            "release": "patch"
+          },
+          {
+            "type": "perf",
+            "release": "minor"
+          },
+          {
+            "type": "revert",
+            "release": "patch"
+          },
+          {
+            "type": "refactor",
+            "release": "major"
+          },
+          {
+            "type": "docs",
+            "release": "patch"
+          },
+          {
+            "type": "style",
+            "release": "patch"
+          },
+          {
+            "type": "test",
+            "release": "patch"
+          },
+          {
+            "type": "build",
+            "release": "patch"
+          },
+          {
+            "type": "ci",
+            "release": "patch"
+          },
+          {
+            "type": "chore",
+            "release": "patch"
+          },
+          {
+            "type": "破坏性更改",
+            "release": "major"
+          },
+          {
+            "type": "BREAKING CHANGE",
+            "release": "major"
+          }
+        ]
+      }
+    ],
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "preset": "conventionalcommits",
+        "presetConfig": {
+          "types": [
+            {
+              "type": "feat",
+              "section": "新功能"
+            },
+            {
+              "type": "feature",
+              "section": "新功能"
+            },
+            {
+              "type": "fix",
+              "section": "修复"
+            },
+            {
+              "type": "perf",
+              "section": "性能"
+            },
+            {
+              "type": "revert",
+              "section": "回滚"
+            },
+            {
+              "type": "refactor",
+              "section": "重构",
+              "hidden": false
+            },
+            {
+              "type": "docs",
+              "section": "文档",
+              "hidden": false
+            },
+            {
+              "type": "style",
+              "section": "代码风格",
+              "hidden": false
+            },
+            {
+              "type": "test",
+              "section": "测试",
+              "hidden": false
+            },
+            {
+              "type": "build",
+              "section": "构建",
+              "hidden": false
+            },
+            {
+              "type": "ci",
+              "section": "持续集成",
+              "hidden": false
+            },
+            {
+              "type": "chore",
+              "scope": "release",
+              "section": "杂务",
+              "hidden": true
+            },
+            {
+              "type": "chore",
+              "section": "杂务",
+              "hidden": false
+            }
+          ]
+        }
+      }
+    ],
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "CHANGELOG.md",
+        "changelogTitle": "# 更新日志\n\n"
+      }
+    ],
+    [
+      "@semantic-release/npm",
+      {
+        "npmPublish": false
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "CHANGELOG.md",
+          "package.json"
+        ],
+        "message": "chore(release): ${nextRelease.version}"
+      }
+    ]
+  ]
+}
