@@ -2,12 +2,12 @@
 
 配置驱动、安全加固的 [Verdaccio](https://verdaccio.org/) 私有 NPM 注册表部署套件。
 
-通过一份描述性配置 (`knuth.config.json`) 统一派生 Verdaccio 主配置与 Docker Compose 编排文件, 避免站点名称、对外域名与私有 scope 在多处文件之间散落和漂移, 同时内置防依赖混淆、上游源收敛与用户端点限流策略。
+通过一份 TypeScript 描述性配置 (`knuth.config.ts`) 统一派生 Verdaccio 主配置与 Docker Compose 编排文件, 避免站点名称、对外域名与私有 scope 在多处文件之间散落和漂移, 同时内置防依赖混淆、上游源收敛与用户端点限流策略。
 
 ## 核心特性
 
-- **单源配置驱动**: 由 `knuth.config.json` 一次生成 `conf/config.yaml`、`docker-compose.yaml` 与 `docker-compose-debug.yaml`, 并提供 `--check` 校验防止配置漂移。
-- **零公司绑定与防误提交**: 生成产物与本地配置 `knuth.config.json` 均默认在 `.gitignore` 中忽略, 部署私有环境时不会误将组织域名或内部 scope 提交到版本库。
+- **TypeScript 单源配置驱动**: 基于 `defineConfig` 提供完整类型约束与 IDE 悬停提示, 由 `knuth.config.ts` 一次生成 `conf/config.yaml`、`docker-compose.yaml` 与 `docker-compose-debug.yaml`, 并支持 `--check` 防配置漂移。
+- **零公司绑定与防误提交**: 本地配置 (`knuth.config.ts`) 与所有生成产物均在 `.gitignore` 中忽略, 部署私有环境时不会误将组织域名或内部 scope 提交到版本库。
 - **依赖混淆防护**: 配置中的 `scopes.private` 与 `scopes.publicInternal` 自动排在 `@*/*` 规则之前并强制切断 `proxy`, 确保内部包不向公共源查询与合并元数据。
 - **安全与高可用默认项**:
   - 启用 `userRateLimit` 防登录/令牌接口暴力破解;
@@ -16,20 +16,20 @@
 
 ## 环境要求
 
-- Node.js `>= 24` (初始化脚本基于原生 TypeScript 运行, 无需构建或安装第三方运行时依赖)
+- Node.js `>= 24` (初始化脚本与 `.ts` 配置基于原生 TypeScript 类型剥离直接运行, 无需编译或安装第三方运行时依赖)
 - Docker / Docker Compose
 
 ## 快速开始
 
 ### 1. 准备配置文件
 
-复制示例配置为本地配置 (`knuth.config.json` 已被 `.gitignore` 忽略):
+复制示例配置为本地配置 (`knuth.config.ts` 已被 `.gitignore` 忽略):
 
 ```shell
-cp knuth.config.example.json knuth.config.json
+cp knuth.config.example.ts knuth.config.ts
 ```
 
-按实际环境编辑 `knuth.config.json`, 常见修改项包括:
+编辑 `knuth.config.ts`, 借助 `defineConfig` 即可获得完整类型提示与字段注释, 常见修改项包括:
 
 - `registry.title` / `registry.description`: 站点标题与描述
 - `registry.publicUrl`: 对外访问地址 (会同步写入 `web.publicPath` 与 `VERDACCIO_PUBLIC_URL`)
@@ -37,7 +37,7 @@ cp knuth.config.example.json knuth.config.json
 - `scopes.private`: 仅认证用户可读写的私有作用域 (如 `@myorg/*` 或简写 `myorg`)
 - `scopes.publicInternal`: 允许匿名读取、仅认证发布的公开内部作用域
 
-完整字段说明与编辑器自动补全由 [knuth.config.schema.json](./knuth.config.schema.json) 提供。
+完整类型契约定义于 [scripts/config.ts](./scripts/config.ts) (`KnuthUserConfig`)。
 
 ### 2. 生成部署文件
 
@@ -51,7 +51,7 @@ npm run init
 npm run init -- --example
 ```
 
-生成产物如下:
+生成产物如下 (均默认忽略, 不进入 Git):
 
 - `conf/config.yaml`: Verdaccio 主配置
 - `docker-compose.yaml`: 生产编排配置
@@ -81,8 +81,8 @@ npm run init -- [选项]
 
 | 选项 | 说明 |
 |---|---|
-| `-c, --config <路径>` | 指定自定义 JSON 配置文件 (默认读取 `./knuth.config.json`) |
-| `--example` | 使用内置 `knuth.config.example.json` 生成配置 |
+| `-c, --config <路径>` | 指定自定义配置文件 (支持 `.ts` / `.mts` / `.js` / `.mjs` / `.json`, 默认读取 `./knuth.config.ts`) |
+| `--example` | 使用内置 `knuth.config.example.ts` 生成配置 |
 | `--dry-run` | 仅预览将生成的文件体积与等效 `docker run` 命令, 不写入磁盘 |
 | `--check` | 检查已生成文件是否与配置源完全一致, 漂移时返回非零退出码 |
 | `-h, --help` | 显示命令行帮助 |

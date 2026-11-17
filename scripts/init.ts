@@ -16,8 +16,8 @@ interface CliOptions {
   help: boolean;
 }
 
-const DEFAULT_CONFIG_FILENAME = 'knuth.config.json';
-const EXAMPLE_CONFIG_FILENAME = 'knuth.config.example.json';
+const DEFAULT_CONFIG_FILENAME = 'knuth.config.ts';
+const EXAMPLE_CONFIG_FILENAME = 'knuth.config.example.ts';
 
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
@@ -98,7 +98,7 @@ function printHelp(): void {
   npm run init [选项]
 
 选项:
-  -c, --config <路径>  指定自定义 JSON 配置文件 (默认读取 ./${DEFAULT_CONFIG_FILENAME})
+  -c, --config <路径>  指定自定义配置文件 (.ts/.js/.json, 默认读取 ./${DEFAULT_CONFIG_FILENAME})
   --example            使用内置示例配置 (${EXAMPLE_CONFIG_FILENAME}) 进行初始化
   --dry-run            仅预览将要生成的文件摘要, 不写入磁盘
   --check              检查已生成文件是否与配置源一致 (防配置漂移)
@@ -108,7 +108,7 @@ function printHelp(): void {
 /**
  * 执行 Knuth 初始化生成逻辑, 返回进程退出码.
  */
-export function runCli(argv: string[], cwd = process.cwd()): number {
+export async function runCli(argv: string[], cwd = process.cwd()): Promise<number> {
   const options = parseArgs(argv);
   if (options.help) {
     printHelp();
@@ -116,7 +116,7 @@ export function runCli(argv: string[], cwd = process.cwd()): number {
   }
 
   const sourcePath = resolveSourceConfigPath(cwd, options);
-  const config = loadConfigFile(sourcePath);
+  const config = await loadConfigFile(sourcePath);
 
   const outputs = [
     { relPath: 'conf/config.yaml', content: renderVerdaccioConfig(config) },
@@ -177,7 +177,7 @@ const isEntrypoint =
 
 if (isEntrypoint) {
   try {
-    process.exitCode = runCli(process.argv.slice(2));
+    process.exitCode = await runCli(process.argv.slice(2));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`初始化失败: ${message}`);

@@ -9,8 +9,8 @@ import { renderDockerCompose, renderVerdaccioConfig } from '../scripts/renderers
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 
-test('示例配置 knuth.config.example.json 校验并渲染完整安全规则', () => {
-  const config = loadConfigFile(join(REPO_ROOT, 'knuth.config.example.json'));
+test('示例配置 knuth.config.example.ts 校验并渲染完整安全规则', async () => {
+  const config = await loadConfigFile(join(REPO_ROOT, 'knuth.config.example.ts'));
   const yaml = renderVerdaccioConfig(config);
 
   assert.match(yaml, /^# Knuth NPM 注册表 — /);
@@ -111,34 +111,62 @@ test('字段校验拦截越界端口、YAML 注入、重名上游与交叉冲突
   );
 });
 
-test('runCli 端到端生成、dry-run 与漂移校验 (--check)', () => {
+test('loadConfigFile 校验模块默认导出与格式白名单', async () => {
+  const workDir = mkdtempSync(join(tmpdir(), 'knuth-load-test-'));
+  try {
+    const noDefaultPath = join(workDir, 'bad.ts');
+    writeFileSync(noDefaultPath, 'export const foo = 1;\n', 'utf8');
+    await assert.rejects(() => loadConfigFile(noDefaultPath), /缺少默认导出/);
+
+    const badExtPath = join(workDir, 'bad.yaml');
+    writeFileSync(badExtPath, 'foo: bar\n', 'utf8');
+    await assert.rejects(() => loadConfigFile(badExtPath), /不支持的配置文件格式/);
+
+    const jsonPath = join(workDir, 'custom.json');
+    writeFileSync(
+      jsonPath,
+      JSON.stringify({ registry: { title: 'JSON Fallback', publicUrl: 'https://a.dev' } }),
+      'utf8',
+    );
+    const loadedJson = await loadConfigFile(jsonPath);
+    assert.equal(loadedJson.registry.title, 'JSON Fallback');
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+test('runCli 读取 knuth.config.ts 端到端生成、dry-run 与漂移校验 (--check)', async () => {
   const workDir = mkdtempSync(join(tmpdir(), 'knuth-cli-test-'));
   try {
+    const configHelperUrl = new URL('../scripts/config.ts', import.meta.url).href;
     writeFileSync(
-      join(workDir, 'knuth.config.json'),
-      JSON.stringify({
-        registry: {
-          title: 'Team Registry',
-          description: '团队私有 npm 仓库',
-          publicUrl: 'https://registry.team.internal',
-        },
-        docker: {
-          port: 4873,
-          containerName: 'team-verdaccio',
-        },
-        scopes: {
-          private: ['@team/*'],
-        },
-      }),
+      join(workDir, 'knuth.config.ts'),
+      `import { defineConfig } from ${JSON.stringify(configHelperUrl)};
+
+export default defineConfig({
+  registry: {
+    title: 'Team Registry',
+    description: '团队私有 npm 仓库',
+    publicUrl: 'https://registry.team.internal',
+  },
+  docker: {
+    port: 4873,
+    containerName: 'team-verdaccio',
+  },
+  scopes: {
+    private: ['@team/*'],
+  },
+});
+`,
       'utf8',
     );
 
     // dry-run 不写入文件
-    assert.equal(runCli(['--dry-run'], workDir), 0);
+    assert.equal(await runCli(['--dry-run'], workDir), 0);
     assert.equal(existsSync(join(workDir, 'conf/config.yaml')), false);
 
     // 正常初始化落盘
-    assert.equal(runCli([], workDir), 0);
+    assert.equal(await runCli([], workDir), 0);
     const generatedYaml = readFileSync(join(workDir, 'conf/config.yaml'), 'utf8');
     const generatedCompose = readFileSync(join(workDir, 'docker-compose.yaml'), 'utf8');
     assert.match(generatedYaml, /"@team\/\*":/);
@@ -146,12 +174,12 @@ test('runCli 端到端生成、dry-run 与漂移校验 (--check)', () => {
     assert.match(generatedCompose, /team-verdaccio/);
 
     // 一致性校验通过
-    assert.equal(runCli(['--check'], workDir), 0);
+    assert.equal(await runCli(['--check'], workDir), 0);
 
     // 人为篡改产物后 --check 应报错返回 1
     mkdirSync(join(workDir, 'conf'), { recursive: true });
     writeFileSync(join(workDir, 'conf/config.yaml'), `${generatedYaml}\n# tampered\n`, 'utf8');
-    assert.equal(runCli(['--check'], workDir), 1);
+    assert.equal(await runCli(['--check'], workDir), 1);
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }

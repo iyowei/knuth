@@ -1,51 +1,114 @@
 import { readFileSync } from 'node:fs';
+import { extname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 /** 允许的 Verdaccio 日志级别 */
 export type LogLevel = 'trace' | 'debug' | 'info' | 'http' | 'warn' | 'error' | 'fatal';
 
 /** 单个上游注册表配置 */
 export interface UplinkConfig {
+  /** 上游源标识名 (仅限小写字母、数字与 _-) */
   name: string;
+  /** 上游源基础 URL (http 或 https) */
   url: string;
+  /** 单次请求超时 (如 "10s") */
   timeout: string;
+  /** 连续失败进入冷却后的恢复探测周期 (如 "1m") */
   failTimeout: string;
 }
 
 /** Knuth 完整配置对象 (经校验和默认值补齐后的规范化形态) */
 export interface KnuthConfig {
   registry: {
+    /** Web UI 页面标题 */
     title: string;
+    /** 注册表实例描述信息, 写入生成产物头注释 */
     description: string;
+    /** 对外访问完整 URL (同步驱动 web.publicPath 与 VERDACCIO_PUBLIC_URL) */
     publicUrl: string;
+    /** Web UI Logo URL; 留空则不输出 logo 字段 */
     logo: string;
+    /** 是否启用暗色主题 */
     darkMode: boolean;
+    /** Web UI 界面语言 */
     i18n: string;
+    /** 单次请求体最大体积 (如 "100mb") */
     maxBodySize: string;
+    /** HTTP Keep-Alive 超时秒数 */
     keepAliveTimeout: number;
+    /** Verdaccio 日志输出级别 */
     logLevel: LogLevel;
   };
   docker: {
+    /** Verdaccio 容器镜像及标签 */
     image: string;
+    /** 容器名称 */
     containerName: string;
+    /** 宿主机与容器映射端口 */
     port: number;
+    /** Docker Compose 桥接网络名称 */
     networkName: string;
   };
   auth: {
+    /** 允许注册的最大用户数; 设为 -1 可禁止新用户注册 */
     maxUsers: number;
+    /** Web 登录令牌有效期 (如 "8h") */
     jwtExpiresIn: string;
     userRateLimit: {
+      /** 限流时间窗口 (毫秒) */
       windowMs: number;
+      /** 时间窗口内单用户端点最大请求次数 */
       max: number;
     };
   };
   scopes: {
+    /** 完全私有作用域 (如 "@myorg/*" 或 "myorg"): 仅认证用户可读写 */
     private: string[];
+    /** 公开可读内部作用域 (如 "@myorg-public/*"): 匿名可读, 仅认证用户可发布与撤包 */
     publicInternal: string[];
   };
+  /** 公共包代理上游注册表列表 (按声明顺序串联探测) */
   uplinks: UplinkConfig[];
   publish: {
+    /** 上游公共源不可达时是否允许继续发布 (对本地私有 scope 零影响) */
     allowOffline: boolean;
   };
+}
+
+/** 面向用户编写 knuth.config.ts 时的输入配置类型 (除必填项外均可选) */
+export interface KnuthUserConfig {
+  registry: {
+    title: string;
+    publicUrl: string;
+    description?: string;
+    logo?: string;
+    darkMode?: boolean;
+    i18n?: string;
+    maxBodySize?: string;
+    keepAliveTimeout?: number;
+    logLevel?: LogLevel;
+  };
+  docker?: Partial<KnuthConfig['docker']>;
+  auth?: {
+    maxUsers?: number;
+    jwtExpiresIn?: string;
+    userRateLimit?: Partial<KnuthConfig['auth']['userRateLimit']>;
+  };
+  scopes?: Partial<KnuthConfig['scopes']>;
+  uplinks?: Array<{
+    name: string;
+    url: string;
+    timeout?: string;
+    failTimeout?: string;
+  }>;
+  publish?: Partial<KnuthConfig['publish']>;
+}
+
+/**
+ * 为 knuth.config.ts 提供类型推导与 IDE 自动补全的声明辅助函数.
+ */
+export function defineConfig(config: KnuthUserConfig): KnuthUserConfig {
+  return config;
 }
 
 const VALID_LOG_LEVELS = new Set<LogLevel>([
@@ -58,6 +121,7 @@ const VALID_LOG_LEVELS = new Set<LogLevel>([
   'fatal',
 ]);
 
+const TS_OR_JS_EXTENSIONS = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs']);
 const SCOPE_NAME_RE = /^@[a-z0-9][a-z0-9._-]*\/\*$/;
 const DOCKER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
 const UPLINK_NAME_RE = /^[a-z][a-z0-9_-]*$/;
@@ -122,7 +186,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function assertPlainObject(value: unknown, field: string): Record<string, unknown> {
   if (!isPlainObject(value)) {
-    throw new Error(`配置字段 "${field}" 必须是 JSON 对象`);
+    throw new Error(`配置字段 "${field}" 必须是配置对象`);
   }
   return value;
 }
@@ -428,16 +492,36 @@ export function validateConfig(raw: unknown): KnuthConfig {
 }
 
 /**
- * 从指定 JSON 路径读取并校验 Knuth 配置.
+ * 从指定路径读取并校验 Knuth 配置.
+ * 原生支持 TypeScript/JS 模块 (.ts/.mts/.js/.mjs) 的默认导出, 并兼容 .json 配置文件.
  */
-export function loadConfigFile(configPath: string): KnuthConfig {
-  const rawText = readFileSync(configPath, 'utf8');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(`解析配置文件 "${configPath}" 失败: ${detail}`);
+export async function loadConfigFile(configPath: string): Promise<KnuthConfig> {
+  const absPath = resolve(configPath);
+  const ext = extname(absPath).toLowerCase();
+
+  if (ext === '.json') {
+    const rawText = readFileSync(absPath, 'utf8');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`解析 JSON 配置文件 "${configPath}" 失败: ${detail}`);
+    }
+    return validateConfig(parsed);
   }
-  return validateConfig(parsed);
+
+  if (TS_OR_JS_EXTENSIONS.has(ext)) {
+    // 附加时间戳查询参数绕过 ESM 缓存, 确保同进程多次加载同一测试文件能读取最新内容
+    const moduleUrl = `${pathToFileURL(absPath).href}?t=${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const loaded = (await import(moduleUrl)) as { default?: unknown };
+    if (loaded.default === undefined) {
+      throw new Error(`配置文件 "${configPath}" 缺少默认导出 (export default)`);
+    }
+    return validateConfig(loaded.default);
+  }
+
+  throw new Error(
+    `不支持的配置文件格式 "${ext || '(无扩展名)'}", 请使用 .ts / .mts / .js / .mjs / .json`,
+  );
 }

@@ -62,6 +62,8 @@ storage/data
 conf/htpasswd
 
 # Knuth 本地描述配置与初始化生成产物 (修改请更新配置源后重新运行 npm run init)
+knuth.config.ts
+knuth.*.local.ts
 knuth.config.json
 knuth.*.local.json
 conf/config.yaml

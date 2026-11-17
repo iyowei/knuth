@@ -18,6 +18,7 @@
     "conf/config.yaml",
     "docker-compose.yaml",
     "docker-compose-debug.yaml",
+    "knuth.config.ts",
     "knuth.config.json"
   ]
 }
