@@ -106,8 +106,13 @@ function renderPackagesSection(config: KnuthConfig): string[] {
 /**
  * 渲染 Verdaccio 主配置文件 (conf/config.yaml).
  */
-export function renderVerdaccioConfig(config: KnuthConfig): string {
+export function renderVerdaccioConfig(
+  config: KnuthConfig,
+  overrides?: { htpasswdFile?: string },
+): string {
   const { registry, auth, publish } = config;
+  const htpasswdFile = overrides?.htpasswdFile ?? auth.htpasswdFile;
+
   const webLines = [
     'web:',
     `  title: ${yamlString(registry.title)}`,
@@ -141,7 +146,7 @@ export function renderVerdaccioConfig(config: KnuthConfig): string {
     '',
     'auth:',
     '  htpasswd:',
-    '    file: ./htpasswd',
+    `    file: ${yamlString(htpasswdFile)}`,
     '    # 允许注册的最大用户数, 设为 -1 可禁用注册',
     `    max_users: ${auth.maxUsers}`,
     '',
@@ -222,13 +227,198 @@ export function renderDockerCompose(config: KnuthConfig, debug = false): string 
 }
 
 /**
- * 渲染等效的原生 docker run 启动命令, 便于命令行直接部署.
+ * 渲染 Kubernetes 部署清单 (k8s/verdaccio.yaml).
+ * ConfigMap 挂载只读配置; htpasswd 自动落在可写 PVC (/verdaccio/storage/htpasswd) 避免只读文件系统报错.
+ */
+export function renderK8sManifest(config: KnuthConfig): string {
+  const { docker, registry, k8s, auth } = config;
+  const k8sHtpasswdFile = auth.htpasswdFile.startsWith('/verdaccio/storage/')
+    ? auth.htpasswdFile
+    : '/verdaccio/storage/htpasswd';
+
+  const embeddedConfig = renderVerdaccioConfig(config, { htpasswdFile: k8sHtpasswdFile })
+    .trimEnd()
+    .split('\n')
+    .map((line) => (line === '' ? '' : `    ${line}`))
+    .join('\n');
+
+  const pvcLines = [
+    'apiVersion: v1',
+    'kind: PersistentVolumeClaim',
+    'metadata:',
+    '  name: knuth-storage-pvc',
+    `  namespace: ${yamlString(k8s.namespace)}`,
+    'spec:',
+    '  accessModes:',
+    '    - ReadWriteOnce',
+  ];
+  if (k8s.storageClassName) {
+    pvcLines.push(`  storageClassName: ${yamlString(k8s.storageClassName)}`);
+  }
+  pvcLines.push(
+    '  resources:',
+    '    requests:',
+    `      storage: ${yamlString(k8s.storageSize)}`,
+  );
+
+  const lines = [
+    ...renderGeneratedHeader(config),
+    '',
+    'apiVersion: v1',
+    'kind: Namespace',
+    'metadata:',
+    `  name: ${yamlString(k8s.namespace)}`,
+    '---',
+    'apiVersion: v1',
+    'kind: ConfigMap',
+    'metadata:',
+    '  name: knuth-config',
+    `  namespace: ${yamlString(k8s.namespace)}`,
+    'data:',
+    '  config.yaml: |',
+    embeddedConfig,
+    '---',
+    ...pvcLines,
+    '---',
+    'apiVersion: apps/v1',
+    'kind: Deployment',
+    'metadata:',
+    '  name: knuth-verdaccio',
+    `  namespace: ${yamlString(k8s.namespace)}`,
+    '  labels:',
+    '    app.kubernetes.io/name: knuth',
+    'spec:',
+    `  replicas: ${k8s.replicas}`,
+    '  # ReadWriteOnce PVC 在滚动更新双 Pod 并存时会卡在卷挂载冲突, 默认采用 Recreate',
+    '  strategy:',
+    '    type: Recreate',
+    '  selector:',
+    '    matchLabels:',
+    '      app.kubernetes.io/name: knuth',
+    '  template:',
+    '    metadata:',
+    '      labels:',
+    '        app.kubernetes.io/name: knuth',
+    '    spec:',
+    '      securityContext:',
+    '        runAsNonRoot: true',
+    '        runAsUser: 10001',
+    '        runAsGroup: 65533',
+    '        fsGroup: 10001',
+    '      containers:',
+    '        - name: verdaccio',
+    `          image: ${yamlString(docker.image)}`,
+    '          imagePullPolicy: IfNotPresent',
+    '          ports:',
+    '            - name: http',
+    `              containerPort: ${docker.port}`,
+    '              protocol: TCP',
+    '          env:',
+    '            - name: VERDACCIO_PORT',
+    `              value: ${yamlString(String(docker.port))}`,
+    '            - name: VERDACCIO_PUBLIC_URL',
+    `              value: ${yamlString(registry.publicUrl)}`,
+    '          readinessProbe:',
+    '            httpGet:',
+    '              path: /-/ping',
+    '              port: http',
+    '            initialDelaySeconds: 5',
+    '            periodSeconds: 10',
+    '          livenessProbe:',
+    '            httpGet:',
+    '              path: /-/ping',
+    '              port: http',
+    '            initialDelaySeconds: 15',
+    '            periodSeconds: 30',
+    '          volumeMounts:',
+    '            - name: config',
+    '              mountPath: /verdaccio/conf/config.yaml',
+    '              subPath: config.yaml',
+    '              readOnly: true',
+    '            - name: storage',
+    '              mountPath: /verdaccio/storage',
+    '      volumes:',
+    '        - name: config',
+    '          configMap:',
+    '            name: knuth-config',
+    '        - name: storage',
+    '          persistentVolumeClaim:',
+    '            claimName: knuth-storage-pvc',
+    '---',
+    'apiVersion: v1',
+    'kind: Service',
+    'metadata:',
+    '  name: knuth-verdaccio',
+    `  namespace: ${yamlString(k8s.namespace)}`,
+    '  labels:',
+    '    app.kubernetes.io/name: knuth',
+    'spec:',
+    `  type: ${yamlString(k8s.serviceType)}`,
+    '  selector:',
+    '    app.kubernetes.io/name: knuth',
+    '  ports:',
+    '    - name: http',
+    `      port: ${docker.port}`,
+    '      targetPort: http',
+    '      protocol: TCP',
+  ];
+
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * 渲染等效的原生 docker run 启动命令 (兼容 Docker 与 OrbStack).
  */
 export function renderDockerRunCommand(config: KnuthConfig): string {
   const { docker, registry } = config;
   return [
     'docker run -d --restart=always \\',
     `  --name ${docker.containerName} \\`,
+    `  -p ${docker.port}:${docker.port} \\`,
+    `  -e VERDACCIO_PORT=${docker.port} \\`,
+    `  -e VERDACCIO_PUBLIC_URL=${registry.publicUrl} \\`,
+    '  -v "$PWD/conf:/verdaccio/conf" \\',
+    '  -v "$PWD/storage:/verdaccio/storage" \\',
+    '  -v "$PWD/plugins:/verdaccio/plugins" \\',
+    `  ${docker.image}`,
+  ].join('\n');
+}
+
+/**
+ * 渲染 macOS container CLI 启动命令 (包含系统服务启动与具名存储卷 10001:65533 初始化).
+ */
+export function renderAppleContainerCommands(config: KnuthConfig): string {
+  const { docker, registry } = config;
+  return [
+    '# 1. 启动 macOS 原生 container 后台服务',
+    'container system start',
+    '',
+    '# 2. 创建具名存储卷并按 Verdaccio 非 root 用户 (10001:65533) 初始化属主',
+    'container volume create knuth-storage',
+    `container run --rm --uid 0 --entrypoint sh -v knuth-storage:/mnt ${docker.image} -c 'mkdir -p /mnt/data && chown -R 10001:65533 /mnt'`,
+    '',
+    '# 3. 启动 Verdaccio 容器 (注意: 建议在 knuth.config.ts 将 auth.htpasswdFile 设为 /verdaccio/storage/htpasswd)',
+    'container run -d \\',
+    `  --name ${docker.containerName} \\`,
+    `  -p ${docker.port}:${docker.port} \\`,
+    `  -e VERDACCIO_PORT=${docker.port} \\`,
+    `  -e VERDACCIO_PUBLIC_URL=${registry.publicUrl} \\`,
+    '  -v "$PWD/conf/config.yaml:/verdaccio/conf/config.yaml:ro" \\',
+    '  -v knuth-storage:/verdaccio/storage \\',
+    `  ${docker.image}`,
+  ].join('\n');
+}
+
+/**
+ * 渲染 rootless Podman 启动命令 (通过 --userns=keep-id:uid=10001,gid=65533 映射宿主机属主).
+ */
+export function renderPodmanCommands(config: KnuthConfig): string {
+  const { docker, registry } = config;
+  return [
+    '# 如在 Linux 启用 SELinux, 可为卷参数追加 :z 或 :Z 标签',
+    'podman run -d --restart=always \\',
+    `  --name ${docker.containerName} \\`,
+    '  --userns=keep-id:uid=10001,gid=65533 \\',
     `  -p ${docker.port}:${docker.port} \\`,
     `  -e VERDACCIO_PORT=${docker.port} \\`,
     `  -e VERDACCIO_PUBLIC_URL=${registry.publicUrl} \\`,

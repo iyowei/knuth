@@ -5,6 +5,9 @@ import { pathToFileURL } from 'node:url';
 /** 允许的 Verdaccio 日志级别 */
 export type LogLevel = 'trace' | 'debug' | 'info' | 'http' | 'warn' | 'error' | 'fatal';
 
+/** 允许的 Kubernetes Service 类型 */
+export type K8sServiceType = 'ClusterIP' | 'NodePort' | 'LoadBalancer';
+
 /** 单个上游注册表配置 */
 export interface UplinkConfig {
   /** 上游源标识名 (仅限小写字母、数字与 _-) */
@@ -50,6 +53,8 @@ export interface KnuthConfig {
     networkName: string;
   };
   auth: {
+    /** htpasswd 文件路径 (默认 "./htpasswd"; 只读配置挂载场景可设为 "/verdaccio/storage/htpasswd") */
+    htpasswdFile: string;
     /** 允许注册的最大用户数; 设为 -1 可禁止新用户注册 */
     maxUsers: number;
     /** Web 登录令牌有效期 (如 "8h") */
@@ -73,6 +78,18 @@ export interface KnuthConfig {
     /** 上游公共源不可达时是否允许继续发布 (对本地私有 scope 零影响) */
     allowOffline: boolean;
   };
+  k8s: {
+    /** 部署所属 Namespace */
+    namespace: string;
+    /** Deployment 副本数 (ReadWriteOnce PVC 建议保持 1) */
+    replicas: number;
+    /** 持久化存储卷容量 (如 "5Gi") */
+    storageSize: string;
+    /** 可选 StorageClass 名称; 留空使用集群默认 */
+    storageClassName: string;
+    /** Service 暴露类型 */
+    serviceType: K8sServiceType;
+  };
 }
 
 /** 面向用户编写 knuth.config.ts 时的输入配置类型 (除必填项外均可选) */
@@ -90,6 +107,7 @@ export interface KnuthUserConfig {
   };
   docker?: Partial<KnuthConfig['docker']>;
   auth?: {
+    htpasswdFile?: string;
     maxUsers?: number;
     jwtExpiresIn?: string;
     userRateLimit?: Partial<KnuthConfig['auth']['userRateLimit']>;
@@ -102,6 +120,7 @@ export interface KnuthUserConfig {
     failTimeout?: string;
   }>;
   publish?: Partial<KnuthConfig['publish']>;
+  k8s?: Partial<KnuthConfig['k8s']>;
 }
 
 /**
@@ -121,9 +140,17 @@ const VALID_LOG_LEVELS = new Set<LogLevel>([
   'fatal',
 ]);
 
+const VALID_K8S_SERVICE_TYPES = new Set<K8sServiceType>([
+  'ClusterIP',
+  'NodePort',
+  'LoadBalancer',
+]);
+
 const TS_OR_JS_EXTENSIONS = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs']);
 const SCOPE_NAME_RE = /^@[a-z0-9][a-z0-9._-]*\/\*$/;
 const DOCKER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+const K8S_NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+const K8S_STORAGE_RE = /^[1-9][0-9]*(Mi|Gi|Ti)$/;
 const UPLINK_NAME_RE = /^[a-z][a-z0-9_-]*$/;
 const DURATION_RE = /^[1-9][0-9]*(ms|s|m|h|d)$/;
 const BODY_SIZE_RE = /^[1-9][0-9]*(kb|mb|gb)$/;
@@ -150,6 +177,7 @@ export const DEFAULT_CONFIG: Omit<KnuthConfig, 'registry'> & {
     networkName: 'knuth-network',
   },
   auth: {
+    htpasswdFile: './htpasswd',
     maxUsers: 12,
     jwtExpiresIn: '8h',
     userRateLimit: {
@@ -177,6 +205,13 @@ export const DEFAULT_CONFIG: Omit<KnuthConfig, 'registry'> & {
   ],
   publish: {
     allowOffline: true,
+  },
+  k8s: {
+    namespace: 'knuth',
+    replicas: 1,
+    storageSize: '5Gi',
+    storageClassName: '',
+    serviceType: 'ClusterIP',
   },
 };
 
@@ -384,6 +419,11 @@ function parseAuth(raw: unknown): KnuthConfig['auth'] {
   }
   const obj = assertPlainObject(raw, 'auth');
 
+  const htpasswdFile =
+    obj.htpasswdFile !== undefined
+      ? assertSingleLineString(obj.htpasswdFile, 'auth.htpasswdFile')
+      : DEFAULT_CONFIG.auth.htpasswdFile;
+
   const maxUsers =
     obj.maxUsers !== undefined
       ? assertIntRange(obj.maxUsers, 'auth.maxUsers', -1, 1000000)
@@ -409,7 +449,7 @@ function parseAuth(raw: unknown): KnuthConfig['auth'] {
     };
   }
 
-  return { maxUsers, jwtExpiresIn, userRateLimit };
+  return { htpasswdFile, maxUsers, jwtExpiresIn, userRateLimit };
 }
 
 function parseScopes(raw: unknown): KnuthConfig['scopes'] {
@@ -476,6 +516,47 @@ function parsePublish(raw: unknown): KnuthConfig['publish'] {
   return { allowOffline };
 }
 
+function parseK8s(raw: unknown): KnuthConfig['k8s'] {
+  if (raw === undefined) return { ...DEFAULT_CONFIG.k8s };
+  const obj = assertPlainObject(raw, 'k8s');
+
+  const namespace =
+    obj.namespace !== undefined
+      ? assertPattern(obj.namespace, 'k8s.namespace', K8S_NAME_RE, '仅限小写字母、数字与连字符')
+      : DEFAULT_CONFIG.k8s.namespace;
+  if (namespace.length > 63) {
+    throw new Error(`配置字段 "k8s.namespace" 长度不能超过 63 个字符: "${namespace}"`);
+  }
+
+  const replicas =
+    obj.replicas !== undefined
+      ? assertIntRange(obj.replicas, 'k8s.replicas', 0, 100)
+      : DEFAULT_CONFIG.k8s.replicas;
+
+  const storageSize =
+    obj.storageSize !== undefined
+      ? assertPattern(obj.storageSize, 'k8s.storageSize', K8S_STORAGE_RE, '示例: 5Gi, 20Gi')
+      : DEFAULT_CONFIG.k8s.storageSize;
+
+  const storageClassName =
+    obj.storageClassName !== undefined
+      ? assertSingleLineString(obj.storageClassName, 'k8s.storageClassName', true)
+      : DEFAULT_CONFIG.k8s.storageClassName;
+
+  let serviceType = DEFAULT_CONFIG.k8s.serviceType;
+  if (obj.serviceType !== undefined) {
+    const rawType = assertSingleLineString(obj.serviceType, 'k8s.serviceType') as K8sServiceType;
+    if (!VALID_K8S_SERVICE_TYPES.has(rawType)) {
+      throw new Error(
+        `配置字段 "k8s.serviceType" 无效: "${rawType}", 允许值: ${[...VALID_K8S_SERVICE_TYPES].join(', ')}`,
+      );
+    }
+    serviceType = rawType;
+  }
+
+  return { namespace, replicas, storageSize, storageClassName, serviceType };
+}
+
 /**
  * 校验未知的原始配置对象并补齐默认值, 返回规范化后的 KnuthConfig.
  */
@@ -488,6 +569,7 @@ export function validateConfig(raw: unknown): KnuthConfig {
     scopes: parseScopes(root.scopes),
     uplinks: parseUplinks(root.uplinks),
     publish: parsePublish(root.publish),
+    k8s: parseK8s(root.k8s),
   };
 }
 

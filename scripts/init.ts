@@ -3,8 +3,11 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadConfigFile } from './config.ts';
 import {
+  renderAppleContainerCommands,
   renderDockerCompose,
   renderDockerRunCommand,
+  renderK8sManifest,
+  renderPodmanCommands,
   renderVerdaccioConfig,
 } from './renderers.ts';
 
@@ -13,6 +16,7 @@ interface CliOptions {
   useExample: boolean;
   dryRun: boolean;
   check: boolean;
+  commands: boolean;
   help: boolean;
 }
 
@@ -24,6 +28,7 @@ function parseArgs(argv: string[]): CliOptions {
     useExample: false,
     dryRun: false,
     check: false,
+    commands: false,
     help: false,
   };
 
@@ -37,6 +42,8 @@ function parseArgs(argv: string[]): CliOptions {
       options.dryRun = true;
     } else if (arg === '--check') {
       options.check = true;
+    } else if (arg === '--commands') {
+      options.commands = true;
     } else if (arg === '--config' || arg === '-c') {
       const next = argv[i + 1];
       if (!next || next.startsWith('-')) {
@@ -98,11 +105,31 @@ function printHelp(): void {
   npm run init [选项]
 
 选项:
-  -c, --config <路径>  指定自定义配置文件 (.ts/.js/.json, 默认读取 ./${DEFAULT_CONFIG_FILENAME})
+  -c, --config <路径>  指定自定义配置文件 (.ts/.mts/.js/.mjs/.json, 默认读取 ./${DEFAULT_CONFIG_FILENAME})
   --example            使用内置示例配置 (${EXAMPLE_CONFIG_FILENAME}) 进行初始化
   --dry-run            仅预览将要生成的文件摘要, 不写入磁盘
   --check              检查已生成文件是否与配置源一致 (防配置漂移)
+  --commands           仅输出各容器平台 (Docker/OrbStack/Podman/macOS container/K8s) 的等效启动命令
   -h, --help           显示本帮助信息`);
+}
+
+function printPlatformCommands(
+  config: Awaited<ReturnType<typeof loadConfigFile>>,
+): void {
+  console.log('=== Docker / OrbStack (Compose) ===');
+  console.log('docker compose up -d');
+  console.log('docker compose -f ./docker-compose-debug.yaml up');
+  console.log('\n=== Docker / OrbStack (原生 CLI) ===');
+  console.log(renderDockerRunCommand(config));
+  console.log('\n=== Podman (Rootless) ===');
+  console.log(renderPodmanCommands(config));
+  console.log('\n=== macOS container CLI ===');
+  console.log(renderAppleContainerCommands(config));
+  console.log('\n=== Kubernetes (kubectl) ===');
+  console.log('kubectl apply -f ./k8s/verdaccio.yaml');
+  console.log(
+    `kubectl -n ${config.k8s.namespace} port-forward svc/knuth-verdaccio ${config.docker.port}:${config.docker.port}`,
+  );
 }
 
 /**
@@ -118,10 +145,16 @@ export async function runCli(argv: string[], cwd = process.cwd()): Promise<numbe
   const sourcePath = resolveSourceConfigPath(cwd, options);
   const config = await loadConfigFile(sourcePath);
 
+  if (options.commands) {
+    printPlatformCommands(config);
+    return 0;
+  }
+
   const outputs = [
     { relPath: 'conf/config.yaml', content: renderVerdaccioConfig(config) },
     { relPath: 'docker-compose.yaml', content: renderDockerCompose(config, false) },
     { relPath: 'docker-compose-debug.yaml', content: renderDockerCompose(config, true) },
+    { relPath: 'k8s/verdaccio.yaml', content: renderK8sManifest(config) },
   ];
 
   if (options.check) {
@@ -164,10 +197,10 @@ export async function runCli(argv: string[], cwd = process.cwd()): Promise<numbe
   for (const item of outputs) {
     console.log(`  - ${item.relPath}`);
   }
-  console.log('\n可用以下方式启动:');
-  console.log('  docker compose up -d');
-  console.log('  docker compose -f ./docker-compose-debug.yaml up');
-  console.log('\n或直接使用社区镜像运行:\n' + renderDockerRunCommand(config));
+  console.log('\n按运行平台启动 (各平台详情见 docs/ 目录):');
+  console.log('  Docker / OrbStack: docker compose up -d');
+  console.log('  Kubernetes:        kubectl apply -f ./k8s/verdaccio.yaml');
+  console.log('  查看全部平台命令:  npm run init -- --commands');
   return 0;
 }
 

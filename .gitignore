@@ -69,6 +69,7 @@ knuth.*.local.json
 conf/config.yaml
 docker-compose.yaml
 docker-compose-debug.yaml
+k8s/verdaccio.yaml
 
 # 修改前置备份产物 (属本地临时留存, 不进版本库)
 *.modified

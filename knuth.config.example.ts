@@ -23,6 +23,8 @@ export default defineConfig({
     networkName: 'knuth-network',
   },
   auth: {
+    // 默认写入 ./htpasswd (/verdaccio/conf/htpasswd); 若宿主机 /verdaccio/conf 只读挂载可改为 /verdaccio/storage/htpasswd
+    htpasswdFile: './htpasswd',
     // 允许注册的最大用户数; 设为 -1 可禁用新用户注册
     maxUsers: 12,
     jwtExpiresIn: '8h',
@@ -53,5 +55,12 @@ export default defineConfig({
   ],
   publish: {
     allowOffline: true,
+  },
+  k8s: {
+    namespace: 'knuth',
+    replicas: 1,
+    storageSize: '5Gi',
+    storageClassName: '',
+    serviceType: 'ClusterIP',
   },
 });
